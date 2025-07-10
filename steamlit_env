@@ -1,23 +1,29 @@
 import streamlit as st
 from snowflake.snowpark import Session
+from snowflake.snowpark.functions import call_function
 from datetime import date
-
-# --- Load Snowflake connection ---
 import os
 from dotenv import load_dotenv
+
+# --- Load environment variables ---
 load_dotenv()
 
 connection_parameters = {
-    "account": "MU17967",
-    "user": "mona",
-    "password": "Mon@varshini1234",
-    "role": "ACCOUNTADMIN",
-    "warehouse": "comput_wh",
-    "database": "HR_DB",
-    "schema": "PUBLIC"
+    "account": os.getenv("SF_ACCOUNT"),
+    "user": os.getenv("SF_USER"),
+    "password": os.getenv("SF_PASSWORD"),
+    "role": os.getenv("SF_ROLE"),
+    "warehouse": os.getenv("SF_WAREHOUSE"),
+    "database": os.getenv("SF_DATABASE"),
+    "schema": os.getenv("SF_SCHEMA")
 }
 
-session = Session.builder.configs(connection_parameters).create()
+# --- Connect to Snowflake ---
+try:
+    session = Session.builder.configs(connection_parameters).create()
+except Exception as e:
+    st.error(f"❌ Snowflake connection failed: {e}")
+    st.stop()
 
 # --- UI Layout ---
 st.set_page_config(page_title="Sales Insights Dashboard", layout="wide")
@@ -88,18 +94,14 @@ st.download_button(
 st.subheader("🤖 Ask the AI Assistant")
 user_question = st.text_area("Ask a sales-related question:", placeholder="e.g. Top product in July?")
 
-if user_question:
-    query = f"""
-    SELECT SNOWFLAKE.CORTEX.COMPLETE(
-        'What are the top products by sales?',
-        input => '{user_question}'
-    ) AS result
-    """
+if user_question.strip():
     try:
-        response = session.sql(query).to_pandas().iloc[0]['RESULT']
+        # Securely call SNOWFLAKE.CORTEX.COMPLETE with parameter
+        result_df = session.sql("SELECT SNOWFLAKE.CORTEX.COMPLETE(?) AS result", [user_question])
+        response = result_df.to_pandas().iloc[0]["RESULT"]
         st.success(response)
     except Exception as e:
-        st.error(f"Cortex failed: {e}")
+        st.error(f"❌ Cortex AI failed: {e}")
 
 # --- Raw Data Viewer ---
 with st.expander("📄 Show Raw Data"):

@@ -1,0 +1,112 @@
+import streamlit as st
+from snowflake.snowpark import Session
+from datetime import date
+
+# --- Load Snowflake connection ---
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+connection_parameters = {
+    "account": "MU17967",
+    "user": "mona",
+    "password": "Mon@varshini1234",
+    "role": "ACCOUNTADMIN",
+    "warehouse": "comput_wh",
+    "database": "HR_DB",
+    "schema": "PUBLIC"
+}
+
+session = Session.builder.configs(connection_parameters).create()
+
+# --- UI Layout ---
+st.set_page_config(page_title="Sales Insights Dashboard", layout="wide")
+st.title("📊 Sales Insights Dashboard with AI + Download")
+
+# --- KPI Metrics ---
+st.subheader("📌 Key Performance Indicators")
+df_kpi = session.sql("""
+    SELECT
+        COUNT(DISTINCT order_id) AS total_orders,
+        COUNT(DISTINCT customer_id) AS total_customers,
+        SUM(quantity * unit_price) AS total_revenue
+    FROM orders
+""").to_pandas().iloc[0]
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Orders", df_kpi["TOTAL_ORDERS"])
+col2.metric("Total Customers", df_kpi["TOTAL_CUSTOMERS"])
+col3.metric("Total Revenue", f"₹{df_kpi['TOTAL_REVENUE']:,.2f}")
+
+# --- Line Chart ---
+st.subheader("📈 Sales Trend Over Time")
+df_trend = session.sql("""
+    SELECT order_date, SUM(quantity * unit_price) AS daily_sales
+    FROM orders
+    GROUP BY order_date
+    ORDER BY order_date
+""")
+st.line_chart(df_trend.to_pandas().set_index("ORDER_DATE"))
+
+# --- Tabs ---
+st.subheader("🧾 Detailed Insights")
+tab1, tab2 = st.tabs(["Top Customers", "Top Reps"])
+
+with tab1:
+    df1 = session.sql("""
+        SELECT c.customer_name, SUM(o.quantity * o.unit_price) AS total_spent
+        FROM orders o
+        JOIN customers c ON o.customer_id = c.customer_id
+        GROUP BY c.customer_name
+        ORDER BY total_spent DESC
+        LIMIT 5
+    """)
+    st.dataframe(df1.to_pandas())
+
+with tab2:
+    df2 = session.sql("""
+        SELECT s.rep_name, SUM(o.quantity * o.unit_price) AS total_sales
+        FROM orders o
+        JOIN sales_reps s ON o.rep_id = s.rep_id
+        GROUP BY s.rep_name
+        ORDER BY total_sales DESC
+        LIMIT 5
+    """)
+    st.dataframe(df2.to_pandas())
+
+# --- Download Orders CSV ---
+st.subheader("⬇️ Download Orders Data")
+df_download = session.sql("SELECT * FROM orders").to_pandas()
+st.download_button(
+    label="Download Orders CSV",
+    data=df_download.to_csv(index=False),
+    file_name="orders.csv",
+    mime="text/csv"
+)
+
+# --- AI Assistant ---
+st.subheader("🤖 Ask the AI Assistant")
+user_question = st.text_area("Ask a sales-related question:", placeholder="e.g. Top product in July?")
+
+if user_question:
+    query = f"""
+    SELECT SNOWFLAKE.CORTEX.COMPLETE(
+        'What are the top products by sales?',
+        input => '{user_question}'
+    ) AS result
+    """
+    try:
+        response = session.sql(query).to_pandas().iloc[0]['RESULT']
+        st.success(response)
+    except Exception as e:
+        st.error(f"Cortex failed: {e}")
+
+# --- Raw Data Viewer ---
+with st.expander("📄 Show Raw Data"):
+    df_raw = session.sql("""
+        SELECT o.*, p.product_name, c.customer_name
+        FROM orders o
+        JOIN products p ON o.product_id = p.product_id
+        JOIN customers c ON o.customer_id = c.customer_id
+    """)
+    st.dataframe(df_raw.to_pandas())
